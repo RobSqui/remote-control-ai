@@ -1,0 +1,9 @@
+.auth-token
+package-lock.json
+node_modules/
+mobile/.expo/
+mobile/package-lock.json
+mobile/node_modules/
+mobile/ios/
+mobile/android/
+.DS_Store

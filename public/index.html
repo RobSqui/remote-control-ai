@@ -1,0 +1,483 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <title>Remote Control AI</title>
+
+  <!-- xterm.js -->
+  <link  rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/css/xterm.css" />
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/xterm@5.5.0/lib/xterm.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-fit@0.10.0/lib/addon-fit.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@xterm/addon-web-links@0.11.0/lib/addon-web-links.js"></script>
+
+  <!-- Socket.io (served by server) -->
+  <script src="/socket.io/socket.io.js"></script>
+
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:       #1a1b1e;
+      --surface:  #25262b;
+      --border:   #373a40;
+      --accent:   #4dabf7;
+      --accent2:  #74c0fc;
+      --danger:   #ff6b6b;
+      --text:     #c1c2c5;
+      --text-dim: #5c5f66;
+      --tab-h:    42px;
+      --toolbar:  48px;
+    }
+
+    html, body { height: 100%; background: var(--bg); color: var(--text); font-family: system-ui, sans-serif; overflow: hidden; }
+
+    /* ── Login ── */
+    #login {
+      position: fixed; inset: 0; display: flex; align-items: center; justify-content: center;
+      background: var(--bg); z-index: 100;
+    }
+    #login form {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 12px;
+      padding: 36px 32px; display: flex; flex-direction: column; gap: 16px;
+      min-width: 300px; box-shadow: 0 8px 32px rgba(0,0,0,.4);
+    }
+    #login h1 { font-size: 1.3rem; font-weight: 600; text-align: center; color: var(--accent); }
+    #login input {
+      background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+      color: var(--text); font-size: 1rem; padding: 10px 14px; outline: none;
+      transition: border-color .2s;
+    }
+    #login input:focus { border-color: var(--accent); }
+    #login button {
+      background: var(--accent); color: #fff; border: none; border-radius: 8px;
+      padding: 10px; font-size: 1rem; font-weight: 600; cursor: pointer; transition: opacity .2s;
+    }
+    #login button:hover { opacity: .85; }
+    #login-error { color: var(--danger); font-size: .85rem; text-align: center; min-height: 1.2em; }
+
+    /* ── Layout ── */
+    #app { display: none; flex-direction: column; height: 100vh; }
+    #app.visible { display: flex; }
+
+    /* ── Toolbar ── */
+    #toolbar {
+      height: var(--toolbar); background: var(--surface); border-bottom: 1px solid var(--border);
+      display: flex; align-items: center; gap: 8px; padding: 0 12px; flex-shrink: 0;
+    }
+    #toolbar .logo { font-weight: 700; font-size: .9rem; color: var(--accent); margin-right: 4px; }
+    #toolbar button {
+      background: none; border: 1px solid var(--border); color: var(--text); border-radius: 6px;
+      padding: 5px 12px; font-size: .8rem; cursor: pointer; transition: all .15s; white-space: nowrap;
+    }
+    #toolbar button:hover { background: var(--border); }
+    #toolbar button.danger { color: var(--danger); border-color: var(--danger); }
+    #toolbar button.danger:hover { background: rgba(255,107,107,.12); }
+    #toolbar button:disabled { opacity: .4; cursor: not-allowed; }
+    #conn-status { margin-left: auto; font-size: .75rem; padding: 4px 10px; border-radius: 20px; }
+    #conn-status.ok   { background: rgba(105,219,124,.15); color: #69db7c; }
+    #conn-status.err  { background: rgba(255,107,107,.15); color: var(--danger); }
+
+    /* ── Tabs ── */
+    #tabs-bar {
+      height: var(--tab-h); display: flex; align-items: flex-end; padding: 0 8px;
+      background: var(--surface); border-bottom: 1px solid var(--border);
+      overflow-x: auto; flex-shrink: 0; gap: 2px;
+    }
+    #tabs-bar::-webkit-scrollbar { display: none; }
+
+    .tab {
+      display: flex; align-items: center; gap: 6px;
+      padding: 6px 14px 6px 12px; border-radius: 6px 6px 0 0;
+      border: 1px solid transparent; border-bottom: none;
+      cursor: pointer; font-size: .82rem; white-space: nowrap;
+      color: var(--text-dim); transition: all .15s; user-select: none;
+    }
+    .tab:hover { color: var(--text); background: rgba(255,255,255,.04); }
+    .tab.active {
+      background: var(--bg); color: var(--text); border-color: var(--border);
+    }
+    .tab .tab-close {
+      font-size: .7rem; opacity: .5; cursor: pointer; padding: 2px 4px;
+      border-radius: 4px; transition: all .15s;
+    }
+    .tab .tab-close:hover { opacity: 1; background: rgba(255,107,107,.2); color: var(--danger); }
+    .tab .tmux-badge {
+      font-size: .62rem; background: rgba(169,227,75,.18); color: #a9e34b;
+      border-radius: 3px; padding: 1px 4px; line-height: 1.4;
+    }
+
+    /* ── Terminal area ── */
+    #terminals { flex: 1; position: relative; overflow: hidden; }
+
+    .term-wrapper {
+      position: absolute; inset: 0; padding: 4px 6px;
+      display: none;
+    }
+    .term-wrapper.active { display: block; }
+    .xterm { height: 100% !important; }
+    .xterm-viewport { overflow-y: auto !important; }
+
+    /* ── Rename modal ── */
+    #rename-modal {
+      display: none; position: fixed; inset: 0; background: rgba(0,0,0,.6);
+      align-items: center; justify-content: center; z-index: 200;
+    }
+    #rename-modal.open { display: flex; }
+    #rename-modal .box {
+      background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+      padding: 24px; display: flex; flex-direction: column; gap: 12px; min-width: 280px;
+    }
+    #rename-modal input {
+      background: var(--bg); border: 1px solid var(--border); border-radius: 6px;
+      color: var(--text); font-size: .95rem; padding: 8px 12px; outline: none;
+    }
+    #rename-modal input:focus { border-color: var(--accent); }
+    #rename-modal .actions { display: flex; gap: 8px; justify-content: flex-end; }
+    #rename-modal button {
+      border: 1px solid var(--border); background: none; color: var(--text);
+      border-radius: 6px; padding: 6px 16px; cursor: pointer; font-size: .85rem;
+    }
+    #rename-modal button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+
+    /* Mobile keyboards helper */
+    #kb-input {
+      position: fixed; opacity: 0; pointer-events: none; width: 1px; height: 1px; top: 0; left: 0;
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── Login ── -->
+<div id="login">
+  <form id="login-form">
+    <h1>&#x1F5A5; Remote Control AI</h1>
+    <input type="password" id="pwd-input" placeholder="Password" autocomplete="current-password" />
+    <button type="submit">Connect</button>
+    <div id="login-error"></div>
+  </form>
+</div>
+
+<!-- ── App ── -->
+  <div id="app">
+  <div id="toolbar">
+    <span class="logo">&#x1F5A5; Terminal</span>
+    <button id="btn-new">+ New</button>
+    <span id="conn-status" class="err">Disconnected</span>
+  </div>
+  <div id="tabs-bar"></div>
+  <div id="terminals"></div>
+</div>
+
+<!-- Rename modal -->
+<div id="rename-modal">
+  <div class="box">
+    <label style="font-size:.85rem;color:var(--text-dim)">New name</label>
+    <input type="text" id="rename-input" />
+    <div class="actions">
+      <button id="rename-cancel">Cancel</button>
+      <button id="rename-ok" class="primary">OK</button>
+    </div>
+  </div>
+</div>
+
+<!-- Hidden input for mobile keyboard -->
+<input id="kb-input" type="text" />
+
+<script>
+// ── State ──────────────────────────────────────────────────────────────────────
+const state = {
+  socket: null,
+  activeId: null,
+  terms: new Map(), // id → { xterm, fitAddon, wrapper, tab }
+};
+
+// ── DOM helpers ───────────────────────────────────────────────────────────────
+const $ = (s) => document.querySelector(s);
+const loginEl     = $('#login');
+const appEl       = $('#app');
+const tabsBar     = $('#tabs-bar');
+const terminalsEl = $('#terminals');
+const connStatus  = $('#conn-status');
+const renameModal = $('#rename-modal');
+
+// ── xterm theme ───────────────────────────────────────────────────────────────
+const THEME = {
+  background:    '#1a1b1e',
+  foreground:    '#c1c2c5',
+  cursor:        '#4dabf7',
+  cursorAccent:  '#1a1b1e',
+  selectionBackground: 'rgba(77,171,247,0.25)',
+  black:   '#25262b', brightBlack:   '#5c5f66',
+  red:     '#ff6b6b', brightRed:     '#ff8787',
+  green:   '#69db7c', brightGreen:   '#8ce99a',
+  yellow:  '#fcc419', brightYellow:  '#ffd43b',
+  blue:    '#4dabf7', brightBlue:    '#74c0fc',
+  magenta: '#cc5de8', brightMagenta: '#da77f2',
+  cyan:    '#22b8cf', brightCyan:    '#3bc9db',
+  white:   '#c1c2c5', brightWhite:   '#f8f9fa',
+};
+
+// ── Create xterm instance ─────────────────────────────────────────────────────
+function makeXterm(id) {
+  const wrapper = document.createElement('div');
+  wrapper.className = 'term-wrapper';
+  wrapper.dataset.id = id;
+  terminalsEl.appendChild(wrapper);
+
+  const term = new Terminal({
+    theme: THEME,
+    fontFamily: '"Cascadia Code", "JetBrains Mono", "Fira Code", monospace',
+    fontSize: 14,
+    lineHeight: 1.2,
+    cursorBlink: true,
+    allowTransparency: false,
+    scrollback: 5000,
+    macOptionIsMeta: true,
+    rightClickSelectsWord: true,
+  });
+
+  const fitAddon     = new FitAddon.FitAddon();
+  const linksAddon   = new WebLinksAddon.WebLinksAddon();
+  term.loadAddon(fitAddon);
+  term.loadAddon(linksAddon);
+
+  term.open(wrapper);
+  fitAddon.fit();
+
+  // Send input to server (filter out terminal protocol responses generated by xterm.js)
+  term.onData((data) => {
+    // Device Attributes responses (DA1: ESC[?…c, DA2: ESC[>…c) and
+    // Cursor Position Reports (ESC[…R) are emitted by xterm.js automatically —
+    // not by the user. Forwarding them to the PTY causes garbled text in tmux.
+    if (/^\x1b\[[\?>][\d;]*[cn]/.test(data) || /^\x1b\[\d+;\d+R/.test(data)) return;
+    state.socket?.emit('terminal:input', { id, data });
+  });
+
+  // Mobile: focus hidden input on tap, relay keypresses
+  wrapper.addEventListener('click', () => {
+    term.focus();
+    if (/Mobi|Android/i.test(navigator.userAgent)) $('#kb-input').focus();
+  });
+
+  return { term, fitAddon, wrapper };
+}
+
+// ── Tab management ────────────────────────────────────────────────────────────
+function addTab(id, name, isTmux = false) {
+  const tab = document.createElement('div');
+  tab.className = 'tab';
+  tab.dataset.id = id;
+  const badge = isTmux ? `<span class="tmux-badge">tmux</span>` : '';
+  tab.innerHTML = `${badge}<span class="tab-label">${esc(name)}</span><span class="tab-close" title="Close">&#x2715;</span>`;
+
+  tab.addEventListener('click', (e) => {
+    if (e.target.classList.contains('tab-close')) {
+      killTerminal(id);
+    } else {
+      focusTab(id);
+    }
+  });
+
+  tab.addEventListener('dblclick', () => openRename(id));
+
+  tabsBar.appendChild(tab);
+  return tab;
+}
+
+function focusTab(id) {
+  state.activeId = id;
+
+  // Update tabs UI
+  document.querySelectorAll('.tab').forEach((t) =>
+    t.classList.toggle('active', Number(t.dataset.id) === id)
+  );
+
+  // Update wrappers
+  document.querySelectorAll('.term-wrapper').forEach((w) =>
+    w.classList.toggle('active', Number(w.dataset.id) === id)
+  );
+
+  // Resize + focus (already attached)
+  const entry = state.terms.get(id);
+  if (entry) {
+    const { fitAddon, term } = entry;
+    setTimeout(() => {
+      fitAddon.fit();
+      const { cols, rows } = term;
+      state.socket?.emit('terminal:resize', { id, cols, rows });
+      term.focus();
+    }, 30);
+  }
+}
+
+function removeTab(id) {
+  const entry = state.terms.get(id);
+  if (!entry) return;
+  entry.term.dispose();
+  entry.wrapper.remove();
+  entry.tab.remove();
+  state.terms.delete(id);
+
+  if (state.activeId === id) {
+    state.activeId = null;
+    const remaining = Array.from(state.terms.keys());
+    if (remaining.length) focusTab(remaining[remaining.length - 1]);
+  }
+}
+
+function killTerminal(id) {
+  state.socket?.emit('terminal:kill', { id });
+}
+
+// ── Rename modal ──────────────────────────────────────────────────────────────
+let renameTargetId = null;
+function openRename(id) {
+  const entry = state.terms.get(id);
+  if (!entry) return;
+  renameTargetId = id;
+  $('#rename-input').value = entry.tab.querySelector('.tab-label').textContent;
+  renameModal.classList.add('open');
+  setTimeout(() => $('#rename-input').select(), 50);
+}
+$('#rename-cancel').addEventListener('click', () => renameModal.classList.remove('open'));
+$('#rename-ok').addEventListener('click', () => {
+  const name = $('#rename-input').value.trim();
+  if (name && renameTargetId !== null) {
+    state.socket?.emit('terminal:rename', { id: renameTargetId, name });
+  }
+  renameModal.classList.remove('open');
+});
+$('#rename-input').addEventListener('keydown', (e) => {
+  if (e.key === 'Enter') $('#rename-ok').click();
+  if (e.key === 'Escape') $('#rename-cancel').click();
+});
+
+// ── Toolbar buttons ───────────────────────────────────────────────────────────
+$('#btn-new').addEventListener('click', () => {
+  state.socket?.emit('terminal:create', {});
+});
+
+// ── Window resize ─────────────────────────────────────────────────────────────
+window.addEventListener('resize', () => {
+  if (state.activeId === null) return;
+  const entry = state.terms.get(state.activeId);
+  if (!entry) return;
+  entry.fitAddon.fit();
+  const { cols, rows } = entry.term;
+  state.socket?.emit('terminal:resize', { id: state.activeId, cols, rows });
+});
+
+// ── Mobile keyboard relay ─────────────────────────────────────────────────────
+const kbInput = $('#kb-input');
+kbInput.addEventListener('input', (e) => {
+  if (state.activeId === null) return;
+  state.socket?.emit('terminal:input', { id: state.activeId, data: e.data || '' });
+  kbInput.value = '';
+});
+
+// ── Socket helpers ────────────────────────────────────────────────────────────
+function setStatus(ok, label) {
+  connStatus.textContent = label;
+  connStatus.className = ok ? 'ok' : 'err';
+}
+
+function connect(password) {
+  const socket = io({ transports: ['websocket'] });
+  state.socket = socket;
+
+  socket.on('connect', () => {
+    setStatus(true, 'Connected');
+    socket.emit('auth', password);
+  });
+
+  socket.on('disconnect', () => setStatus(false, 'Disconnected'));
+
+  socket.on('auth:ok', () => {
+    loginEl.style.display = 'none';
+    appEl.classList.add('visible');
+  });
+
+  socket.on('auth:error', (msg) => {
+    $('#login-error').textContent = msg;
+    state.socket = null;
+    socket.disconnect();
+  });
+
+  // Existing terminals after auth
+  socket.on('terminals:list', (list) => {
+    list.forEach(({ id, name, isTmux }) => {
+      if (state.terms.has(id)) return;
+      const { term, fitAddon, wrapper } = makeXterm(id);
+      const tab = addTab(id, name, isTmux);
+      state.terms.set(id, { term, fitAddon, wrapper, tab });
+      // Only attach if it was just created
+      socket.emit('terminal:attach', { id });
+    });
+
+    if (list.length === 0) {
+      socket.emit('terminal:create', {});
+    } else {
+      const lastId = list[list.length - 1].id;
+      if (state.activeId === null) focusTab(lastId);
+    }
+  });
+
+  // New terminal created (broadcast)
+  socket.on('terminal:new', ({ id, name, isTmux }) => {
+    if (state.terms.has(id)) return;
+    const { term, fitAddon, wrapper } = makeXterm(id);
+    const tab = addTab(id, name, isTmux);
+    state.terms.set(id, { term, fitAddon, wrapper, tab });
+    socket.emit('terminal:attach', { id });
+    focusTab(id);
+  });
+
+  // Server tells this client to focus a terminal
+  socket.on('terminal:focus', (id) => {
+    if (state.terms.has(id)) focusTab(id);
+  });
+
+  // Terminal data
+  socket.on('terminal:data', ({ id, data }) => {
+    state.terms.get(id)?.term.write(data);
+  });
+
+  // Terminal closed
+  socket.on('terminal:closed', (id) => {
+    removeTab(id);
+    if (state.terms.size === 0) {
+      // Auto-create a new one if all are gone
+      setTimeout(() => socket.emit('terminal:create', {}), 300);
+    }
+  });
+
+  // Terminal renamed
+  socket.on('terminal:renamed', ({ id, name }) => {
+    const entry = state.terms.get(id);
+    if (entry) {
+      entry.tab.querySelector('.tab-label').textContent = name;
+      document.title = name + ' — Remote Control AI';
+    }
+  });
+}
+
+// ── Login form ────────────────────────────────────────────────────────────────
+$('#login-form').addEventListener('submit', (e) => {
+  e.preventDefault();
+  $('#login-error').textContent = '';
+  const pwd = $('#pwd-input').value;
+  if (!pwd) return;
+  connect(pwd);
+});
+
+// Auto-focus password field
+setTimeout(() => $('#pwd-input').focus(), 100);
+
+// ── Utils ─────────────────────────────────────────────────────────────────────
+function esc(s) {
+  return s.replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+}
+</script>
+</body>
+</html>

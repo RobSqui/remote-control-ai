@@ -1,0 +1,27 @@
+{
+  "expo": {
+    "name": "Remote Control AI",
+    "slug": "remote-control-ai-mobile",
+    "version": "1.0.0",
+    "orientation": "default",
+    "userInterfaceStyle": "dark",
+    "newArchEnabled": true,
+    "splash": {
+      "backgroundColor": "#1a1b1e"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.remotecontrolai.mobile"
+    },
+    "android": {
+      "adaptiveIcon": {
+        "backgroundColor": "#1a1b1e"
+      },
+      "package": "com.remotecontrolai.mobile"
+    },
+    "plugins": [
+      "expo-router"
+    ],
+    "scheme": "remote-control-ai-mobile"
+  }
+}
